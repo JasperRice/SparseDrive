@@ -1,14 +1,14 @@
 import copy
-import torch
-from torch import nn
-import torch.nn.functional as F
+
 import numpy as np
-
-from mmcv.utils import build_from_cfg
+import torch
+import torch.nn.functional as F
 from mmcv.cnn.bricks.registry import PLUGIN_LAYERS
+from mmcv.utils import build_from_cfg
+from torch import nn
 
-from projects.mmdet3d_plugin.ops import feature_maps_format
 from projects.mmdet3d_plugin.core.box3d import *
+from projects.mmdet3d_plugin.ops import feature_maps_format
 
 
 @PLUGIN_LAYERS.register_module()
@@ -35,7 +35,24 @@ class InstanceQueue(nn.Module):
             nn.AvgPool2d(kernel_size),
         )
         self.ego_anchor = nn.Parameter(
-            torch.tensor([[0, 0.5, -1.84 + 1.56/2, np.log(4.08), np.log(1.73), np.log(1.56), 1, 0, 0, 0, 0],], dtype=torch.float32),
+            torch.tensor(
+                [
+                    [
+                        0,
+                        0.5,
+                        -1.84 + 1.56 / 2,
+                        np.log(4.08),
+                        np.log(1.73),
+                        np.log(1.56),
+                        1,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ],
+                ],
+                dtype=torch.float32,
+            ),
             requires_grad=False,
         )
 
@@ -62,16 +79,12 @@ class InstanceQueue(nn.Module):
         mask,
         anchor_handler,
     ):
-        if (
-            self.period is not None
-            and batch_size == self.period.shape[0]
-        ):
+        if self.period is not None and batch_size == self.period.shape[0]:
             if anchor_handler is not None:
                 T_temp2cur = feature_maps[0].new_tensor(
                     np.stack(
                         [
-                            x["T_global_inv"]
-                            @ self.metas["img_metas"][i]["T_global"]
+                            x["T_global_inv"] @ self.metas["img_metas"][i]["T_global"]
                             for i, x in enumerate(metas["img_metas"])
                         ]
                     )
@@ -96,18 +109,22 @@ class InstanceQueue(nn.Module):
         self.prepare_motion(det_output, mask)
         ego_feature, ego_anchor = self.prepare_planning(feature_maps, mask, batch_size)
 
-        # temporal 
+        # temporal
         temp_instance_feature = torch.stack(self.instance_feature_queue, dim=2)
         temp_anchor = torch.stack(self.anchor_queue, dim=2)
         temp_ego_feature = torch.stack(self.ego_feature_queue, dim=2)
         temp_ego_anchor = torch.stack(self.ego_anchor_queue, dim=2)
 
         period = torch.cat([self.period, self.ego_period], dim=1)
-        temp_instance_feature = torch.cat([temp_instance_feature, temp_ego_feature], dim=1)
+        temp_instance_feature = torch.cat(
+            [temp_instance_feature, temp_ego_feature], dim=1
+        )
         temp_anchor = torch.cat([temp_anchor, temp_ego_anchor], dim=1)
         num_agent = temp_anchor.shape[1]
-        
-        temp_mask = torch.arange(len(self.anchor_queue), 0, -1, device=temp_anchor.device)
+
+        temp_mask = torch.arange(
+            len(self.anchor_queue), 0, -1, device=temp_anchor.device
+        )
         temp_mask = temp_mask[None, None].repeat((batch_size, num_agent, 1))
         temp_mask = torch.gt(temp_mask, period[..., None])
 
@@ -124,7 +141,7 @@ class InstanceQueue(nn.Module):
         if self.period == None:
             self.period = instance_feature.new_zeros(instance_feature.shape[:2]).long()
         else:
-            instance_id = det_output['instance_id']
+            instance_id = det_output["instance_id"]
             prev_instance_id = self.prev_instance_id
             match = instance_id[..., None] == prev_instance_id[:, None]
             if self.tracking_threshold > 0:
@@ -133,20 +150,14 @@ class InstanceQueue(nn.Module):
 
             for i in range(len(self.instance_feature_queue)):
                 temp_feature = self.instance_feature_queue[i]
-                temp_feature = (
-                    match[..., None] * temp_feature[:, None]
-                ).sum(dim=2)
+                temp_feature = (match[..., None] * temp_feature[:, None]).sum(dim=2)
                 self.instance_feature_queue[i] = temp_feature
 
                 temp_anchor = self.anchor_queue[i]
-                temp_anchor = (
-                    match[..., None] * temp_anchor[:, None]
-                ).sum(dim=2)
+                temp_anchor = (match[..., None] * temp_anchor[:, None]).sum(dim=2)
                 self.anchor_queue[i] = temp_anchor
 
-            self.period = (
-                match * self.period[:, None]
-            ).sum(dim=2)
+            self.period = (match * self.period[:, None]).sum(dim=2)
 
         self.instance_feature_queue.append(instance_feature.detach())
         self.anchor_queue.append(det_anchors.detach())
@@ -169,9 +180,7 @@ class InstanceQueue(nn.Module):
         ego_feature = self.ego_feature_encoder(feature_map)
         ego_feature = ego_feature.unsqueeze(1).squeeze(-1).squeeze(-1)
 
-        ego_anchor = torch.tile(
-            self.ego_anchor[None], (batch_size, 1, 1)
-        )
+        ego_anchor = torch.tile(self.ego_anchor[None], (batch_size, 1, 1))
         if self.prev_ego_status is not None:
             prev_ego_status = torch.where(
                 mask[:, None, None],
@@ -192,7 +201,7 @@ class InstanceQueue(nn.Module):
         self.ego_feature_queue.append(ego_feature.detach())
         self.ego_anchor_queue.append(ego_anchor.detach())
         self.ego_period += 1
-        
+
         if len(self.ego_feature_queue) > self.queue_length:
             self.ego_feature_queue.pop(0)
             self.ego_anchor_queue.pop(0)
@@ -203,7 +212,7 @@ class InstanceQueue(nn.Module):
     def cache_motion(self, instance_feature, det_output, metas):
         det_classification = det_output["classification"][-1].sigmoid()
         det_confidence = det_classification.max(dim=-1).values
-        instance_id = det_output['instance_id']
+        instance_id = det_output["instance_id"]
         self.metas = metas
         self.prev_confidence = det_confidence.detach()
         self.prev_instance_id = instance_id

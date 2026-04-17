@@ -1,29 +1,26 @@
-import random
+import copy
 import math
 import os
-from os import path as osp
-import cv2
+import random
 import tempfile
-import copy
-import prettytable
+from os import path as osp
 
-import numpy as np
-import torch
-from torch.utils.data import Dataset
-import pyquaternion
-from shapely.geometry import LineString
-from nuscenes.utils.data_classes import Box as NuScenesBox
-from nuscenes.eval.detection.config import config_factory as det_configs
-from nuscenes.eval.common.config import config_factory as track_configs
-
+import cv2
 import mmcv
+import numpy as np
+import prettytable
+import pyquaternion
+import torch
 from mmcv.utils import print_log
 from mmdet.datasets import DATASETS
 from mmdet.datasets.pipelines import Compose
-from .utils import (
-    draw_lidar_bbox3d_on_img,
-    draw_lidar_bbox3d_on_bev,
-)
+from nuscenes.eval.common.config import config_factory as track_configs
+from nuscenes.eval.detection.config import config_factory as det_configs
+from nuscenes.utils.data_classes import Box as NuScenesBox
+from shapely.geometry import LineString
+from torch.utils.data import Dataset
+
+from .utils import draw_lidar_bbox3d_on_bev, draw_lidar_bbox3d_on_img
 
 
 @DATASETS.register_module()
@@ -60,9 +57,9 @@ class NuScenes3DDataset(Dataset):
         "barrier",
     )
     MAP_CLASSES = (
-        'ped_crossing',
-        'divider',
-        'boundary',
+        "ped_crossing",
+        "divider",
+        "boundary",
     )
     ID_COLOR_MAP = [
         (59, 59, 238),
@@ -112,7 +109,7 @@ class NuScenes3DDataset(Dataset):
 
         if classes is not None:
             self.CLASSES = classes
-        if map_classes is not None: 
+        if map_classes is not None:
             self.MAP_CLASSES = map_classes
         self.cat2id = {name: i for i, name in enumerate(self.CLASSES)}
         self.data_infos = self.load_annotations(self.ann_file)
@@ -123,10 +120,14 @@ class NuScenes3DDataset(Dataset):
         self.with_velocity = with_velocity
         self.det3d_eval_version = det3d_eval_version
         self.det3d_eval_configs = det_configs(self.det3d_eval_version)
-        self.det3d_eval_configs.class_names = list(self.det3d_eval_configs.class_range.keys())
+        self.det3d_eval_configs.class_names = list(
+            self.det3d_eval_configs.class_range.keys()
+        )
         self.track3d_eval_version = track3d_eval_version
         self.track3d_eval_configs = track_configs(self.track3d_eval_version)
-        self.track3d_eval_configs.class_names = list(self.track3d_eval_configs.class_range.keys())
+        self.track3d_eval_configs.class_names = list(
+            self.track3d_eval_configs.class_range.keys()
+        )
         if self.modality is None:
             self.modality = dict(
                 use_camera=False,
@@ -142,7 +143,7 @@ class NuScenes3DDataset(Dataset):
         self.keep_consistent_seq_aug = keep_consistent_seq_aug
         if with_seq_flag:
             self._set_sequence_group_flag()
-        
+
         self.work_dir = work_dir
         self.eval_config = eval_config
 
@@ -156,7 +157,7 @@ class NuScenes3DDataset(Dataset):
         if self.sequences_split_num == -1:
             self.flag = np.arange(len(self.data_infos))
             return
-        
+
         res = []
 
         curr_sequence = 0
@@ -170,9 +171,7 @@ class NuScenes3DDataset(Dataset):
 
         if self.sequences_split_num != 1:
             if self.sequences_split_num == "all":
-                self.flag = np.array(
-                    range(len(self.data_infos)), dtype=np.int64
-                )
+                self.flag = np.array(range(len(self.data_infos)), dtype=np.int64)
             else:
                 bin_counts = np.bincount(self.flag)
                 new_flags = []
@@ -184,8 +183,7 @@ class NuScenes3DDataset(Dataset):
                                 0,
                                 bin_counts[curr_flag],
                                 math.ceil(
-                                    bin_counts[curr_flag]
-                                    / self.sequences_split_num
+                                    bin_counts[curr_flag] / self.sequences_split_num
                                 ),
                             )
                         )
@@ -216,10 +214,7 @@ class NuScenes3DDataset(Dataset):
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
             crop_h = (
-                int(
-                    (1 - np.random.uniform(*self.data_aug_conf["bot_pct_lim"]))
-                    * newH
-                )
+                int((1 - np.random.uniform(*self.data_aug_conf["bot_pct_lim"])) * newH)
                 - fH
             )
             crop_w = int(np.random.uniform(0, max(0, newW - fW)))
@@ -233,10 +228,7 @@ class NuScenes3DDataset(Dataset):
             resize = max(fH / H, fW / W)
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
-            crop_h = (
-                int((1 - np.mean(self.data_aug_conf["bot_pct_lim"])) * newH)
-                - fH
-            )
+            crop_h = int((1 - np.mean(self.data_aug_conf["bot_pct_lim"])) * newH) - fH
             crop_w = int(max(0, newW - fW) / 2)
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
             flip = False
@@ -285,7 +277,7 @@ class NuScenes3DDataset(Dataset):
         self.version = self.metadata["version"]
         print(self.metadata)
         return data_infos
-    
+
     def anno2geom(self, annos):
         map_geoms = {}
         for label, anno_list in annos.items():
@@ -294,7 +286,7 @@ class NuScenes3DDataset(Dataset):
                 geom = LineString(anno)
                 map_geoms[label].append(geom)
         return map_geoms
-    
+
     def get_data_info(self, index):
         info = self.data_infos[index]
         input_dict = dict(
@@ -307,7 +299,7 @@ class NuScenes3DDataset(Dataset):
             lidar2ego_rotation=info["lidar2ego_rotation"],
             ego2global_translation=info["ego2global_translation"],
             ego2global_rotation=info["ego2global_rotation"],
-            ego_status=info['ego_status'].astype(np.float32),
+            ego_status=info["ego_status"].astype(np.float32),
             map_infos=info["map_annos"],
         )
         lidar2ego = np.eye(4)
@@ -334,9 +326,7 @@ class NuScenes3DDataset(Dataset):
                 image_paths.append(cam_info["data_path"])
                 # obtain lidar to image transformation matrix
                 lidar2cam_r = np.linalg.inv(cam_info["sensor2lidar_rotation"])
-                lidar2cam_t = (
-                    cam_info["sensor2lidar_translation"] @ lidar2cam_r.T
-                )
+                lidar2cam_t = cam_info["sensor2lidar_translation"] @ lidar2cam_r.T
                 lidar2cam_rt = np.eye(4)
                 lidar2cam_rt[:3, :3] = lidar2cam_r.T
                 lidar2cam_rt[3, :3] = -lidar2cam_t
@@ -391,18 +381,18 @@ class NuScenes3DDataset(Dataset):
         if "instance_inds" in info:
             instance_inds = np.array(info["instance_inds"], dtype=np.int)[mask]
             anns_results["instance_inds"] = instance_inds
-            
-        if 'gt_agent_fut_trajs' in info:
-            anns_results['gt_agent_fut_trajs'] = info['gt_agent_fut_trajs'][mask]
-            anns_results['gt_agent_fut_masks'] = info['gt_agent_fut_masks'][mask]
 
-        if 'gt_ego_fut_trajs' in info:
-            anns_results['gt_ego_fut_trajs'] = info['gt_ego_fut_trajs']
-            anns_results['gt_ego_fut_masks'] = info['gt_ego_fut_masks']
-            anns_results['gt_ego_fut_cmd'] = info['gt_ego_fut_cmd']
-        
+        if "gt_agent_fut_trajs" in info:
+            anns_results["gt_agent_fut_trajs"] = info["gt_agent_fut_trajs"][mask]
+            anns_results["gt_agent_fut_masks"] = info["gt_agent_fut_masks"][mask]
+
+        if "gt_ego_fut_trajs" in info:
+            anns_results["gt_ego_fut_trajs"] = info["gt_ego_fut_trajs"]
+            anns_results["gt_ego_fut_masks"] = info["gt_ego_fut_masks"]
+            anns_results["gt_ego_fut_cmd"] = info["gt_ego_fut_cmd"]
+
             ## get future box for planning eval
-            fut_ts = int(info['gt_ego_fut_masks'].sum())
+            fut_ts = int(info["gt_ego_fut_masks"].sum())
             fut_boxes = []
             cur_scene_token = info["scene_token"]
             cur_T_global = get_T_global(info)
@@ -417,12 +407,17 @@ class NuScenes3DDataset(Dataset):
                     mask = fut_info["num_lidar_pts"] > 0
 
                 fut_gt_bboxes_3d = fut_info["gt_boxes"][mask]
-                
+
                 fut_T_global = get_T_global(fut_info)
                 T_fut2cur = np.linalg.inv(cur_T_global) @ fut_T_global
 
-                center = fut_gt_bboxes_3d[:, :3] @ T_fut2cur[:3, :3].T + T_fut2cur[:3, 3]
-                yaw = np.stack([np.cos(fut_gt_bboxes_3d[:, 6]), np.sin(fut_gt_bboxes_3d[:, 6])], axis=-1)
+                center = (
+                    fut_gt_bboxes_3d[:, :3] @ T_fut2cur[:3, :3].T + T_fut2cur[:3, 3]
+                )
+                yaw = np.stack(
+                    [np.cos(fut_gt_bboxes_3d[:, 6]), np.sin(fut_gt_bboxes_3d[:, 6])],
+                    axis=-1,
+                )
                 yaw = yaw @ T_fut2cur[:2, :2].T
                 yaw = np.arctan2(yaw[..., 1], yaw[..., 0])
 
@@ -430,8 +425,8 @@ class NuScenes3DDataset(Dataset):
                 fut_gt_bboxes_3d[:, 6] = yaw
                 fut_boxes.append(fut_gt_bboxes_3d)
 
-            anns_results['fut_boxes'] = fut_boxes
-        
+            anns_results["fut_boxes"] = fut_boxes
+
         return anns_results
 
     def _format_bbox(self, results, jsonfile_prefix=None, tracking=False):
@@ -524,9 +519,7 @@ class NuScenes3DDataset(Dataset):
         from nuscenes import NuScenes
 
         output_dir = osp.join(*osp.split(result_path)[:-1])
-        nusc = NuScenes(
-            version=self.version, dataroot=self.data_root, verbose=False
-        )
+        nusc = NuScenes(version=self.version, dataroot=self.data_root, verbose=False)
         eval_set_map = {
             "v1.0-mini": "mini_val",
             "v1.0-trainval": "val",
@@ -551,17 +544,13 @@ class NuScenes3DDataset(Dataset):
             for name in self.CLASSES:
                 for k, v in metrics["label_aps"][name].items():
                     val = float("{:.4f}".format(v))
-                    detail[
-                        "{}/{}_AP_dist_{}".format(metric_prefix, name, k)
-                    ] = val
+                    detail["{}/{}_AP_dist_{}".format(metric_prefix, name, k)] = val
                 for k, v in metrics["label_tp_errors"][name].items():
                     val = float("{:.4f}".format(v))
                     detail["{}/{}_{}".format(metric_prefix, name, k)] = val
                 for k, v in metrics["tp_errors"].items():
                     val = float("{:.4f}".format(v))
-                    detail[
-                        "{}/{}".format(metric_prefix, self.ErrNameMapping[k])
-                    ] = val
+                    detail["{}/{}".format(metric_prefix, self.ErrNameMapping[k])] = val
 
             detail["{}/NDS".format(metric_prefix)] = metrics["nd_score"]
             detail["{}/mAP".format(metric_prefix)] = metrics["mean_ap"]
@@ -628,64 +617,62 @@ class NuScenes3DDataset(Dataset):
                 results_ = [out[name] for out in results]
                 tmp_file_ = jsonfile_prefix
                 result_files.update(
-                    {
-                        name: self._format_bbox(
-                            results_, tmp_file_, tracking=tracking
-                        )
-                    }
+                    {name: self._format_bbox(results_, tmp_file_, tracking=tracking)}
                 )
         return result_files, tmp_dir
 
     def format_map_results(self, results, prefix=None):
-        submissions = {'results': {},}
-        
+        submissions = {
+            "results": {},
+        }
+
         for j, pred in enumerate(results):
-            '''
+            """
             For each case, the result should be formatted as Dict{'vectors': [], 'scores': [], 'labels': []}
             'vectors': List of vector, each vector is a array([[x1, y1], [x2, y2] ...]),
                 contain all vectors predicted in this sample.
-            'scores: List of score(float), 
+            'scores: List of score(float),
                 contain scores of all instances in this sample.
-            'labels': List of label(int), 
+            'labels': List of label(int),
                 contain labels of all instances in this sample.
-            '''
-            if pred is None: # empty prediction
+            """
+            if pred is None:  # empty prediction
                 continue
-            pred = pred['img_bbox']
+            pred = pred["img_bbox"]
 
-            single_case = {'vectors': [], 'scores': [], 'labels': []}
-            token = self.data_infos[j]['token']
-            for i in range(len(pred['scores'])):
-                score = pred['scores'][i]
-                label = pred['labels'][i]
-                vector = pred['vectors'][i]
+            single_case = {"vectors": [], "scores": [], "labels": []}
+            token = self.data_infos[j]["token"]
+            for i in range(len(pred["scores"])):
+                score = pred["scores"][i]
+                label = pred["labels"][i]
+                vector = pred["vectors"][i]
 
                 # A line should have >=2 points
                 if len(vector) < 2:
                     continue
-                
-                single_case['vectors'].append(vector)
-                single_case['scores'].append(score)
-                single_case['labels'].append(label)
-            
-            submissions['results'][token] = single_case
-        
-        out_path = osp.join(prefix, 'submission_vector.json')
-        print(f'saving submissions results to {out_path}')
+
+                single_case["vectors"].append(vector)
+                single_case["scores"].append(score)
+                single_case["labels"].append(label)
+
+            submissions["results"][token] = single_case
+
+        out_path = osp.join(prefix, "submission_vector.json")
+        print(f"saving submissions results to {out_path}")
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         mmcv.dump(submissions, out_path)
         return out_path
 
-    def format_motion_results(self, results, jsonfile_prefix=None, tracking=False, thresh=None):
+    def format_motion_results(
+        self, results, jsonfile_prefix=None, tracking=False, thresh=None
+    ):
         nusc_annos = {}
         mapped_class_names = self.CLASSES
 
         print("Start to convert detection format...")
         for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
             annos = []
-            boxes = output_to_nusc_box(
-                det['img_bbox'], threshold=None
-            )
+            boxes = output_to_nusc_box(det["img_bbox"], threshold=None)
             sample_token = self.data_infos[sample_id]["token"]
             boxes = lidar_nusc_box_to_global(
                 self.data_infos[sample_id],
@@ -751,7 +738,7 @@ class NuScenes3DDataset(Dataset):
                     )
                 nusc_anno.update(
                     dict(
-                        trajs=det['img_bbox']['trajs_3d'][i].numpy(),
+                        trajs=det["img_bbox"]["trajs_3d"][i].numpy(),
                     )
                 )
                 annos.append(nusc_anno)
@@ -761,14 +748,11 @@ class NuScenes3DDataset(Dataset):
             "results": nusc_annos,
         }
 
-        return nusc_submissions 
+        return nusc_submissions
 
-    def _evaluate_single_motion(self,
-                         results,
-                         result_path,
-                         logger=None,
-                         metric='bbox',
-                         result_name='pts_bbox'):
+    def _evaluate_single_motion(
+        self, results, result_path, logger=None, metric="bbox", result_name="pts_bbox"
+    ):
         """Evaluation for a single model in nuScenes protocol.
 
         Args:
@@ -783,14 +767,15 @@ class NuScenes3DDataset(Dataset):
             dict: Dictionary of evaluation details.
         """
         from nuscenes import NuScenes
-        from .evaluation.motion.motion_eval_uniad import NuScenesEval as NuScenesEvalMotion
+
+        from .evaluation.motion.motion_eval_uniad import \
+            NuScenesEval as NuScenesEvalMotion
 
         output_dir = result_path
-        nusc = NuScenes(
-            version=self.version, dataroot=self.data_root, verbose=False)
+        nusc = NuScenes(version=self.version, dataroot=self.data_root, verbose=False)
         eval_set_map = {
-            'v1.0-mini': 'mini_val',
-            'v1.0-trainval': 'val',
+            "v1.0-mini": "mini_val",
+            "v1.0-trainval": "val",
         }
         nusc_eval = NuScenesEvalMotion(
             nusc,
@@ -799,20 +784,21 @@ class NuScenes3DDataset(Dataset):
             eval_set=eval_set_map[self.version],
             output_dir=output_dir,
             verbose=False,
-            seconds=6)
+            seconds=6,
+        )
         metrics = nusc_eval.main(render_curves=False)
-        
-        MOTION_METRICS = ['EPA', 'min_ade_err', 'min_fde_err', 'miss_rate_err']
-        class_names = ['car', 'pedestrian']
+
+        MOTION_METRICS = ["EPA", "min_ade_err", "min_fde_err", "miss_rate_err"]
+        class_names = ["car", "pedestrian"]
 
         table = prettytable.PrettyTable()
         table.field_names = ["class names"] + MOTION_METRICS
         for class_name in class_names:
             row_data = [class_name]
             for m in MOTION_METRICS:
-                row_data.append('%.4f' % metrics[f'{class_name}_{m}'])
+                row_data.append("%.4f" % metrics[f"{class_name}_{m}"])
             table.add_row(row_data)
-        print_log('\n'+str(table), logger=logger)
+        print_log("\n" + str(table), logger=logger)
         return metrics
 
     def evaluate(
@@ -829,11 +815,11 @@ class NuScenes3DDataset(Dataset):
     ):
         res_path = "results.pkl" if "trainval" in self.version else "results_mini.pkl"
         res_path = osp.join(self.work_dir, res_path)
-        print('All Results write to', res_path)
+        print("All Results write to", res_path)
         mmcv.dump(results, res_path)
 
         results_dict = dict()
-        if eval_mode['with_det']:
+        if eval_mode["with_det"]:
             self.tracking = eval_mode["with_tracking"]
             self.tracking_threshold = eval_mode["tracking_threshold"]
             for metric in ["detection", "tracking"]:
@@ -851,72 +837,78 @@ class NuScenes3DDataset(Dataset):
                         )
                     results_dict.update(ret_dict)
                 elif isinstance(result_files, str):
-                    ret_dict = self._evaluate_single(
-                        result_files, tracking=tracking
-                    )
+                    ret_dict = self._evaluate_single(result_files, tracking=tracking)
                     results_dict.update(ret_dict)
 
                 if tmp_dir is not None:
                     tmp_dir.cleanup()
 
-        if eval_mode['with_map']:
+        if eval_mode["with_map"]:
             from .evaluation.map.vector_eval import VectorEvaluate
+
             self.map_evaluator = VectorEvaluate(self.eval_config)
             result_path = self.format_map_results(results, prefix=self.work_dir)
             map_results_dict = self.map_evaluator.evaluate(result_path, logger=logger)
             results_dict.update(map_results_dict)
 
-        if eval_mode['with_motion']:
+        if eval_mode["with_motion"]:
             thresh = eval_mode["motion_threshhold"]
-            result_files = self.format_motion_results(results, jsonfile_prefix=self.work_dir, thresh=thresh)
-            motion_results_dict = self._evaluate_single_motion(result_files, self.work_dir, logger=logger)
+            result_files = self.format_motion_results(
+                results, jsonfile_prefix=self.work_dir, thresh=thresh
+            )
+            motion_results_dict = self._evaluate_single_motion(
+                result_files, self.work_dir, logger=logger
+            )
             results_dict.update(motion_results_dict)
-        
-        if eval_mode['with_planning']:
+
+        if eval_mode["with_planning"]:
             from .evaluation.planning.planning_eval import planning_eval
-            planning_results_dict = planning_eval(results, self.eval_config, logger=logger)
+
+            planning_results_dict = planning_eval(
+                results, self.eval_config, logger=logger
+            )
             results_dict.update(planning_results_dict)
 
         if show or out_dir:
             self.show(results, save_dir=out_dir, show=show, pipeline=pipeline)
-        
+
         # print main metrics for recording
-        metric_str = '\n'
+        metric_str = "\n"
         if "img_bbox_NuScenes/NDS" in results_dict:
             metric_str += f'mAP: {results_dict.get("img_bbox_NuScenes/mAP"):.4f}\n'
             metric_str += f'mATE: {results_dict.get("img_bbox_NuScenes/mATE"):.4f}\n'
             metric_str += f'mASE: {results_dict.get("img_bbox_NuScenes/mASE"):.4f}\n'
-            metric_str += f'mAOE: {results_dict.get("img_bbox_NuScenes/mAOE"):.4f}\n' 
-            metric_str += f'mAVE: {results_dict.get("img_bbox_NuScenes/mAVE"):.4f}\n' 
-            metric_str += f'mAAE: {results_dict.get("img_bbox_NuScenes/mAAE"):.4f}\n' 
+            metric_str += f'mAOE: {results_dict.get("img_bbox_NuScenes/mAOE"):.4f}\n'
+            metric_str += f'mAVE: {results_dict.get("img_bbox_NuScenes/mAVE"):.4f}\n'
+            metric_str += f'mAAE: {results_dict.get("img_bbox_NuScenes/mAAE"):.4f}\n'
             metric_str += f'NDS: {results_dict.get("img_bbox_NuScenes/NDS"):.4f}\n\n'
-        
+
         if "img_bbox_NuScenes/amota" in results_dict:
-            metric_str += f'AMOTA: {results_dict["img_bbox_NuScenes/amota"]:.4f}\n' 
-            metric_str += f'AMOTP: {results_dict["img_bbox_NuScenes/amotp"]:.4f}\n' 
-            metric_str += f'RECALL: {results_dict["img_bbox_NuScenes/recall"]:.4f}\n' 
-            metric_str += f'MOTAR: {results_dict["img_bbox_NuScenes/motar"]:.4f}\n' 
-            metric_str += f'MOTA: {results_dict["img_bbox_NuScenes/mota"]:.4f}\n' 
-            metric_str += f'MOTP: {results_dict["img_bbox_NuScenes/motp"]:.4f}\n' 
-            metric_str += f'IDS: {results_dict["img_bbox_NuScenes/ids"]}\n\n' 
-        
+            metric_str += f'AMOTA: {results_dict["img_bbox_NuScenes/amota"]:.4f}\n'
+            metric_str += f'AMOTP: {results_dict["img_bbox_NuScenes/amotp"]:.4f}\n'
+            metric_str += f'RECALL: {results_dict["img_bbox_NuScenes/recall"]:.4f}\n'
+            metric_str += f'MOTAR: {results_dict["img_bbox_NuScenes/motar"]:.4f}\n'
+            metric_str += f'MOTA: {results_dict["img_bbox_NuScenes/mota"]:.4f}\n'
+            metric_str += f'MOTP: {results_dict["img_bbox_NuScenes/motp"]:.4f}\n'
+            metric_str += f'IDS: {results_dict["img_bbox_NuScenes/ids"]}\n\n'
+
         if "mAP_normal" in results_dict:
-            metric_str += f'ped_crossing= {results_dict["ped_crossing"]:.4f}\n' 
-            metric_str += f'divider= {results_dict["divider"]:.4f}\n' 
-            metric_str += f'boundary= {results_dict["boundary"]:.4f}\n' 
-            metric_str += f'mAP_normal= {results_dict["mAP_normal"]:.4f}\n\n' 
+            metric_str += f'ped_crossing= {results_dict["ped_crossing"]:.4f}\n'
+            metric_str += f'divider= {results_dict["divider"]:.4f}\n'
+            metric_str += f'boundary= {results_dict["boundary"]:.4f}\n'
+            metric_str += f'mAP_normal= {results_dict["mAP_normal"]:.4f}\n\n'
 
         if "car_EPA" in results_dict:
-            metric_str += f'Car / Ped\n' 
+            metric_str += f"Car / Ped\n"
             metric_str += f'epa= {results_dict["car_EPA"]:.4f} / {results_dict["pedestrian_EPA"]:.4f}\n'
             metric_str += f'ade= {results_dict["car_min_ade_err"]:.4f} / {results_dict["pedestrian_min_ade_err"]:.4f}\n'
             metric_str += f'fde= {results_dict["car_min_fde_err"]:.4f} / {results_dict["pedestrian_min_fde_err"]:.4f}\n'
-            metric_str += f'mr= {results_dict["car_miss_rate_err"]:.4f} / {results_dict["pedestrian_miss_rate_err"]:.4f}\n\n' 
+            metric_str += f'mr= {results_dict["car_miss_rate_err"]:.4f} / {results_dict["pedestrian_miss_rate_err"]:.4f}\n\n'
 
         if "L2" in results_dict:
             metric_str += f'obj_box_col: {(results_dict["obj_box_col"]*100):.3f}%\n'
             metric_str += f'L2: {results_dict["L2"]:.4f}\n\n'
-        
+
         print_log(metric_str, logger=logger)
         return results_dict
 
@@ -945,9 +937,7 @@ class NuScenes3DDataset(Dataset):
             if "instance_ids" in result and self.tracking:
                 color = []
                 for id in result["instance_ids"].cpu().numpy().tolist():
-                    color.append(
-                        self.ID_COLOR_MAP[int(id % len(self.ID_COLOR_MAP))]
-                    )
+                    color.append(self.ID_COLOR_MAP[int(id % len(self.ID_COLOR_MAP))])
             elif "labels_3d" in result:
                 color = []
                 for id in result["labels_3d"].cpu().numpy().tolist():

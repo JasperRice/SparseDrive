@@ -1,10 +1,14 @@
-import numpy as np
-from .distance import chamfer_distance, frechet_distance, chamfer_distance_batch
 from typing import List, Tuple, Union
+
+import numpy as np
 from numpy.typing import NDArray
 
-def average_precision(recalls, precisions, mode='area'):
-    """Calculate average precision. 
+from .distance import (chamfer_distance, chamfer_distance_batch,
+                       frechet_distance)
+
+
+def average_precision(recalls, precisions, mode="area"):
+    """Calculate average precision.
 
     Args:
         recalls (ndarray): shape (num_dets, )
@@ -22,37 +26,38 @@ def average_precision(recalls, precisions, mode='area'):
 
     assert recalls.shape == precisions.shape and recalls.ndim == 2
     num_scales = recalls.shape[0]
-    ap = 0.
+    ap = 0.0
 
-    if mode == 'area':
+    if mode == "area":
         zeros = np.zeros((num_scales, 1), dtype=recalls.dtype)
         ones = np.ones((num_scales, 1), dtype=recalls.dtype)
         mrec = np.hstack((zeros, recalls, ones))
         mpre = np.hstack((zeros, precisions, zeros))
         for i in range(mpre.shape[1] - 1, 0, -1):
             mpre[:, i - 1] = np.maximum(mpre[:, i - 1], mpre[:, i])
-        
+
         ind = np.where(mrec[0, 1:] != mrec[0, :-1])[0]
-        ap = np.sum(
-            (mrec[0, ind + 1] - mrec[0, ind]) * mpre[0, ind + 1])
-    
-    elif mode == '11points':
+        ap = np.sum((mrec[0, ind + 1] - mrec[0, ind]) * mpre[0, ind + 1])
+
+    elif mode == "11points":
         for thr in np.arange(0, 1 + 1e-3, 0.1):
             precs = precisions[0, recalls[i, :] >= thr]
             prec = precs.max() if precs.size > 0 else 0
             ap += prec
         ap /= 11
     else:
-        raise ValueError(
-            'Unrecognized mode, only "area" and "11points" are supported')
-    
+        raise ValueError('Unrecognized mode, only "area" and "11points" are supported')
+
     return ap
 
-def instance_match(pred_lines: NDArray, 
-                   scores: NDArray, 
-                   gt_lines: NDArray, 
-                   thresholds: Union[Tuple, List], 
-                   metric: str='chamfer') -> List:
+
+def instance_match(
+    pred_lines: NDArray,
+    scores: NDArray,
+    gt_lines: NDArray,
+    thresholds: Union[Tuple, List],
+    metric: str = "chamfer",
+) -> List:
     """Compute whether detected lines are true positive or false positive.
 
     Args:
@@ -66,14 +71,14 @@ def instance_match(pred_lines: NDArray,
         list_of_tp_fp (list): tp-fp matching result at all thresholds
     """
 
-    if metric == 'chamfer':
+    if metric == "chamfer":
         distance_fn = chamfer_distance
 
-    elif metric == 'frechet':
+    elif metric == "frechet":
         distance_fn = frechet_distance
-    
+
     else:
-        raise ValueError(f'unknown distance function {metric}')
+        raise ValueError(f"unknown distance function {metric}")
 
     num_preds = pred_lines.shape[0]
     num_gts = gt_lines.shape[0]
@@ -89,14 +94,15 @@ def instance_match(pred_lines: NDArray,
         for thr in thresholds:
             tp_fp_list.append((tp.copy(), fp.copy()))
         return tp_fp_list
-    
+
     if num_preds == 0:
         for thr in thresholds:
             tp_fp_list.append((tp.copy(), fp.copy()))
         return tp_fp_list
 
-    assert pred_lines.shape[1] == gt_lines.shape[1], \
-        "sample points num should be the same"
+    assert (
+        pred_lines.shape[1] == gt_lines.shape[1]
+    ), "sample points num should be the same"
 
     # distance matrix: M x N
     matrix = np.zeros((num_preds, num_gts))
@@ -104,7 +110,7 @@ def instance_match(pred_lines: NDArray,
     # for i in range(num_preds):
     #     for j in range(num_gts):
     #         matrix[i, j] = distance_fn(pred_lines[i], gt_lines[j])
-    
+
     matrix = chamfer_distance_batch(pred_lines, gt_lines)
     # for each det, the min distance with all gts
     matrix_min = matrix.min(axis=1)
@@ -130,7 +136,7 @@ def instance_match(pred_lines: NDArray,
                     fp[i] = 1
             else:
                 fp[i] = 1
-        
+
         tp_fp_list.append((tp, fp))
 
     return tp_fp_list

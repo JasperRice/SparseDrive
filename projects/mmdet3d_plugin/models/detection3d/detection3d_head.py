@@ -1,23 +1,17 @@
-from typing import List, Optional, Tuple, Union
 import warnings
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
-
-from mmcv.cnn.bricks.registry import (
-    ATTENTION,
-    PLUGIN_LAYERS,
-    POSITIONAL_ENCODING,
-    FEEDFORWARD_NETWORK,
-    NORM_LAYERS,
-)
+from mmcv.cnn.bricks.registry import (ATTENTION, FEEDFORWARD_NETWORK,
+                                      NORM_LAYERS, PLUGIN_LAYERS,
+                                      POSITIONAL_ENCODING)
 from mmcv.runner import BaseModule, force_fp32
 from mmcv.utils import build_from_cfg
-from mmdet.core.bbox.builder import BBOX_SAMPLERS
-from mmdet.core.bbox.builder import BBOX_CODERS
-from mmdet.models import HEADS, LOSSES
 from mmdet.core import reduce_mean
+from mmdet.core.bbox.builder import BBOX_CODERS, BBOX_SAMPLERS
+from mmdet.models import HEADS, LOSSES
 
 from ..blocks import DeformableFeatureAggregation as DFG
 
@@ -46,7 +40,7 @@ class Sparse4DHead(BaseModule):
         gt_reg_key: str = "gt_bboxes_3d",
         gt_id_key: str = "instance_id",
         with_instance_id: bool = True,
-        task_prefix: str = 'det',
+        task_prefix: str = "det",
         reg_weights: List = None,
         operation_order: Optional[List[str]] = None,
         cls_threshold_to_reg: float = -1,
@@ -115,12 +109,8 @@ class Sparse4DHead(BaseModule):
         )
         self.embed_dims = self.instance_bank.embed_dims
         if self.decouple_attn:
-            self.fc_before = nn.Linear(
-                self.embed_dims, self.embed_dims * 2, bias=False
-            )
-            self.fc_after = nn.Linear(
-                self.embed_dims * 2, self.embed_dims, bias=False
-            )
+            self.fc_before = nn.Linear(self.embed_dims, self.embed_dims * 2, bias=False)
+            self.fc_after = nn.Linear(self.embed_dims * 2, self.embed_dims, bias=False)
         else:
             self.fc_before = nn.Identity()
             self.fc_after = nn.Identity()
@@ -186,9 +176,7 @@ class Sparse4DHead(BaseModule):
             temp_instance_feature,
             temp_anchor,
             time_interval,
-        ) = self.instance_bank.get(
-            batch_size, metas, dn_metas=self.sampler.dn_metas
-        )
+        ) = self.instance_bank.get(batch_size, metas, dn_metas=self.sampler.dn_metas)
 
         # ========= prepare for denosing training ============
         # 1. get dn metas: noisy-anchors and corresponding GT
@@ -243,9 +231,7 @@ class Sparse4DHead(BaseModule):
             )
             num_instance = instance_feature.shape[1]
             num_free_instance = num_instance - num_dn_anchor
-            attn_mask = anchor.new_ones(
-                (num_instance, num_instance), dtype=torch.bool
-            )
+            attn_mask = anchor.new_ones((num_instance, num_instance), dtype=torch.bool)
             attn_mask[:num_free_instance, :num_free_instance] = False
             attn_mask[num_free_instance:, num_free_instance:] = dn_attn_mask
 
@@ -270,9 +256,7 @@ class Sparse4DHead(BaseModule):
                     temp_instance_feature,
                     query_pos=anchor_embed,
                     key_pos=temp_anchor_embed,
-                    attn_mask=attn_mask
-                    if temp_instance_feature is None
-                    else None,
+                    attn_mask=attn_mask if temp_instance_feature is None else None,
                 )
             elif op == "gnn":
                 instance_feature = self.graph_model(
@@ -344,15 +328,12 @@ class Sparse4DHead(BaseModule):
 
         # split predictions of learnable instances and noisy instances
         if dn_metas is not None:
-            dn_classification = [
-                x[:, num_free_instance:] for x in classification
-            ]
+            dn_classification = [x[:, num_free_instance:] for x in classification]
             classification = [x[:, :num_free_instance] for x in classification]
             dn_prediction = [x[:, num_free_instance:] for x in prediction]
             prediction = [x[:, :num_free_instance] for x in prediction]
             quality = [
-                x[:, :num_free_instance] if x is not None else None
-                for x in quality
+                x[:, :num_free_instance] if x is not None else None for x in quality
             ]
             output.update(
                 {
@@ -400,9 +381,7 @@ class Sparse4DHead(BaseModule):
         )
 
         # cache current instances for temporal modeling
-        self.instance_bank.cache(
-            instance_feature, anchor, cls, metas, feature_maps
-        )
+        self.instance_bank.cache(instance_feature, anchor, cls, metas, feature_maps)
         if self.with_instance_id:
             instance_id = self.instance_bank.get_instance_id(
                 cls, anchor, self.decoder.score_threshold
@@ -432,9 +411,7 @@ class Sparse4DHead(BaseModule):
             mask = torch.logical_not(torch.all(reg_target == 0, dim=-1))
             mask_valid = mask.clone()
 
-            num_pos = max(
-                reduce_mean(torch.sum(mask).to(dtype=reg.dtype)), 1.0
-            )
+            num_pos = max(reduce_mean(torch.sum(mask).to(dtype=reg.dtype)), 1.0)
             if self.cls_threshold_to_reg > 0:
                 threshold = self.cls_threshold_to_reg
                 mask = torch.logical_and(
@@ -486,9 +463,7 @@ class Sparse4DHead(BaseModule):
             reg_weights,
             num_dn_pos,
         ) = self.prepare_for_dn_loss(model_outs)
-        for decoder_idx, (cls, reg) in enumerate(
-            zip(dn_cls_scores, dn_reg_preds)
-        ):
+        for decoder_idx, (cls, reg) in enumerate(zip(dn_cls_scores, dn_reg_preds)):
             if (
                 "temp_dn_valid_mask" in model_outs
                 and decoder_idx == self.num_single_frame_decoder
@@ -523,12 +498,12 @@ class Sparse4DHead(BaseModule):
 
     def prepare_for_dn_loss(self, model_outs, prefix=""):
         dn_valid_mask = model_outs[f"{prefix}dn_valid_mask"].flatten(end_dim=1)
-        dn_cls_target = model_outs[f"{prefix}dn_cls_target"].flatten(
-            end_dim=1
-        )[dn_valid_mask]
-        dn_reg_target = model_outs[f"{prefix}dn_reg_target"].flatten(
-            end_dim=1
-        )[dn_valid_mask][..., : len(self.reg_weights)]
+        dn_cls_target = model_outs[f"{prefix}dn_cls_target"].flatten(end_dim=1)[
+            dn_valid_mask
+        ]
+        dn_reg_target = model_outs[f"{prefix}dn_reg_target"].flatten(end_dim=1)[
+            dn_valid_mask
+        ][..., : len(self.reg_weights)]
         dn_pos_mask = dn_cls_target >= 0
         dn_reg_target = dn_reg_target[dn_pos_mask]
         reg_weights = dn_reg_target.new_tensor(self.reg_weights)[None].tile(

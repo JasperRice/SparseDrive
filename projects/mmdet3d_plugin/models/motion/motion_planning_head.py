@@ -1,29 +1,23 @@
-from typing import List, Optional, Tuple, Union
-import warnings
 import copy
+import warnings
+from typing import List, Optional, Tuple, Union
 
-import numpy as np
 import cv2
+import numpy as np
 import torch
 import torch.nn as nn
-
-from mmcv.utils import build_from_cfg
 from mmcv.cnn import Linear, bias_init_with_prob
+from mmcv.cnn.bricks.registry import (ATTENTION, FEEDFORWARD_NETWORK,
+                                      NORM_LAYERS, PLUGIN_LAYERS,
+                                      POSITIONAL_ENCODING)
 from mmcv.runner import BaseModule, force_fp32
-from mmcv.cnn.bricks.registry import (
-    ATTENTION,
-    PLUGIN_LAYERS,
-    POSITIONAL_ENCODING,
-    FEEDFORWARD_NETWORK,
-    NORM_LAYERS,
-)
+from mmcv.utils import build_from_cfg
 from mmdet.core import reduce_mean
-from mmdet.models import HEADS
-from mmdet.core.bbox.builder import BBOX_SAMPLERS, BBOX_CODERS
-from mmdet.models import build_loss
+from mmdet.core.bbox.builder import BBOX_CODERS, BBOX_SAMPLERS
+from mmdet.models import HEADS, build_loss
 
-from projects.mmdet3d_plugin.datasets.utils import box3d_to_corners
 from projects.mmdet3d_plugin.core.box3d import *
+from projects.mmdet3d_plugin.datasets.utils import box3d_to_corners
 
 from ..attention import gen_sineembed_for_position
 from ..blocks import linear_relu_ln
@@ -76,7 +70,7 @@ class MotionPlanningHead(BaseModule):
             if cfg is None:
                 return None
             return build_from_cfg(cfg, registry)
-        
+
         self.instance_queue = build(instance_queue, PLUGIN_LAYERS)
         self.motion_sampler = build(motion_sampler, BBOX_SAMPLERS)
         self.planning_sampler = build(planning_sampler, BBOX_SAMPLERS)
@@ -99,12 +93,8 @@ class MotionPlanningHead(BaseModule):
         self.embed_dims = embed_dims
 
         if self.decouple_attn:
-            self.fc_before = nn.Linear(
-                self.embed_dims, self.embed_dims * 2, bias=False
-            )
-            self.fc_after = nn.Linear(
-                self.embed_dims * 2, self.embed_dims, bias=False
-            )
+            self.fc_before = nn.Linear(self.embed_dims, self.embed_dims * 2, bias=False)
+            self.fc_after = nn.Linear(self.embed_dims * 2, self.embed_dims, bias=False)
         else:
             self.fc_before = nn.Identity()
             self.fc_after = nn.Identity()
@@ -153,8 +143,8 @@ class MotionPlanningHead(BaseModule):
                 m.init_weight()
 
     def get_motion_anchor(
-        self, 
-        classification, 
+        self,
+        classification,
         prediction,
     ):
         cls_ids = classification.argmax(dim=-1)
@@ -173,7 +163,7 @@ class MotionPlanningHead(BaseModule):
             ]
         )
 
-        trajs_lidar = torch.einsum('abcij,jkab->abcik', trajs, rot_mat_T)
+        trajs_lidar = torch.einsum("abcij,jkab->abcik", trajs, rot_mat_T)
         return trajs_lidar
 
     def graph_model(
@@ -205,7 +195,7 @@ class MotionPlanningHead(BaseModule):
         )
 
     def forward(
-        self, 
+        self,
         det_output,
         map_output,
         feature_maps,
@@ -213,7 +203,7 @@ class MotionPlanningHead(BaseModule):
         anchor_encoder,
         mask,
         anchor_handler,
-    ):   
+    ):
         # =========== det/map feature/anchor ===========
         instance_feature = det_output["instance_feature"]
         anchor_embed = det_output["anchor_embed"]
@@ -257,18 +247,22 @@ class MotionPlanningHead(BaseModule):
 
         # =========== mode anchor init ===========
         motion_anchor = self.get_motion_anchor(det_classification, det_anchors)
-        plan_anchor = torch.tile(
-            self.plan_anchor[None], (bs, 1, 1, 1, 1)
-        )
+        plan_anchor = torch.tile(self.plan_anchor[None], (bs, 1, 1, 1, 1))
 
         # =========== mode query init ===========
-        motion_mode_query = self.motion_anchor_encoder(gen_sineembed_for_position(motion_anchor[..., -1, :]))
+        motion_mode_query = self.motion_anchor_encoder(
+            gen_sineembed_for_position(motion_anchor[..., -1, :])
+        )
         plan_pos = gen_sineembed_for_position(plan_anchor[..., -1, :])
         plan_mode_query = self.plan_anchor_encoder(plan_pos).flatten(1, 2).unsqueeze(1)
 
         # =========== cat instance and ego ===========
-        instance_feature_selected = torch.cat([instance_feature_selected, ego_feature], dim=1)
-        anchor_embed_selected = torch.cat([anchor_embed_selected, ego_anchor_embed], dim=1)
+        instance_feature_selected = torch.cat(
+            [instance_feature_selected, ego_feature], dim=1
+        )
+        anchor_embed_selected = torch.cat(
+            [anchor_embed_selected, ego_anchor_embed], dim=1
+        )
 
         instance_feature = torch.cat([instance_feature, ego_feature], dim=1)
         anchor_embed = torch.cat([anchor_embed, ego_anchor_embed], dim=1)
@@ -312,8 +306,12 @@ class MotionPlanningHead(BaseModule):
                     key_pos=map_anchor_embed_selected,
                 )
             elif op == "refine":
-                motion_query = motion_mode_query + (instance_feature + anchor_embed)[:, :num_anchor].unsqueeze(2)
-                plan_query = plan_mode_query + (instance_feature + anchor_embed)[:, num_anchor:].unsqueeze(2) 
+                motion_query = motion_mode_query + (instance_feature + anchor_embed)[
+                    :, :num_anchor
+                ].unsqueeze(2)
+                plan_query = plan_mode_query + (instance_feature + anchor_embed)[
+                    :, num_anchor:
+                ].unsqueeze(2)
                 (
                     motion_cls,
                     motion_reg,
@@ -331,9 +329,13 @@ class MotionPlanningHead(BaseModule):
                 planning_classification.append(plan_cls)
                 planning_prediction.append(plan_reg)
                 planning_status.append(plan_status)
-        
-        self.instance_queue.cache_motion(instance_feature[:, :num_anchor], det_output, metas)
-        self.instance_queue.cache_planning(instance_feature[:, num_anchor:], plan_status)
+
+        self.instance_queue.cache_motion(
+            instance_feature[:, :num_anchor], det_output, metas
+        )
+        self.instance_queue.cache_planning(
+            instance_feature[:, num_anchor:], plan_status
+        )
 
         motion_output = {
             "classification": motion_classification,
@@ -349,13 +351,8 @@ class MotionPlanningHead(BaseModule):
             "anchor_queue": self.instance_queue.ego_anchor_queue,
         }
         return motion_output, planning_output
-    
-    def loss(self,
-        motion_model_outs, 
-        planning_model_outs,
-        data, 
-        motion_loss_cache
-    ):
+
+    def loss(self, motion_model_outs, planning_model_outs, data, motion_loss_cache):
         loss = {}
         motion_loss = self.loss_motion(motion_model_outs, data, motion_loss_cache)
         loss.update(motion_loss)
@@ -368,28 +365,23 @@ class MotionPlanningHead(BaseModule):
         cls_scores = model_outs["classification"]
         reg_preds = model_outs["prediction"]
         output = {}
-        for decoder_idx, (cls, reg) in enumerate(
-            zip(cls_scores, reg_preds)
-        ):
-            (
-                cls_target, 
-                cls_weight, 
-                reg_pred, 
-                reg_target, 
-                reg_weight, 
-                num_pos
-            ) = self.motion_sampler.sample(
-                reg,
-                data["gt_agent_fut_trajs"],
-                data["gt_agent_fut_masks"],
-                motion_loss_cache,
+        for decoder_idx, (cls, reg) in enumerate(zip(cls_scores, reg_preds)):
+            cls_target, cls_weight, reg_pred, reg_target, reg_weight, num_pos = (
+                self.motion_sampler.sample(
+                    reg,
+                    data["gt_agent_fut_trajs"],
+                    data["gt_agent_fut_masks"],
+                    motion_loss_cache,
+                )
             )
             num_pos = max(reduce_mean(num_pos), 1.0)
 
             cls = cls.flatten(end_dim=1)
             cls_target = cls_target.flatten(end_dim=1)
             cls_weight = cls_weight.flatten(end_dim=1)
-            cls_loss = self.motion_loss_cls(cls, cls_target, weight=cls_weight, avg_factor=num_pos)
+            cls_loss = self.motion_loss_cls(
+                cls, cls_target, weight=cls_weight, avg_factor=num_pos
+            )
 
             reg_weight = reg_weight.flatten(end_dim=1)
             reg_pred = reg_pred.flatten(end_dim=1)
@@ -421,16 +413,16 @@ class MotionPlanningHead(BaseModule):
         ):
             (
                 cls,
-                cls_target, 
-                cls_weight, 
-                reg_pred, 
-                reg_target, 
-                reg_weight, 
+                cls_target,
+                cls_weight,
+                reg_pred,
+                reg_target,
+                reg_weight,
             ) = self.planning_sampler.sample(
                 cls,
                 reg,
-                data['gt_ego_fut_trajs'],
-                data['gt_ego_fut_masks'],
+                data["gt_ego_fut_trajs"],
+                data["gt_ego_fut_masks"],
                 data,
             )
             cls = cls.flatten(end_dim=1)
@@ -443,10 +435,8 @@ class MotionPlanningHead(BaseModule):
             reg_target = reg_target.flatten(end_dim=1)
             reg_weight = reg_weight.unsqueeze(-1)
 
-            reg_loss = self.plan_loss_reg(
-                reg_pred, reg_target, weight=reg_weight
-            )
-            status_loss = self.plan_loss_status(status.squeeze(1), data['ego_status'])
+            reg_loss = self.plan_loss_reg(reg_pred, reg_target, weight=reg_weight)
+            status_loss = self.plan_loss_status(status.squeeze(1), data["ego_status"])
 
             output.update(
                 {
@@ -460,7 +450,7 @@ class MotionPlanningHead(BaseModule):
 
     @force_fp32(apply_to=("model_outs"))
     def post_process(
-        self, 
+        self,
         det_output,
         motion_output,
         planning_output,
@@ -476,7 +466,7 @@ class MotionPlanningHead(BaseModule):
         planning_result = self.planning_decoder.decode(
             det_output,
             motion_output,
-            planning_output, 
+            planning_output,
             data,
         )
 
